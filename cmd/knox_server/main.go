@@ -70,7 +70,7 @@ func main() {
         os.Exit(1)
 	}
 
-    keyFile, err := os.Open(u.HomeDir + "/.knox_server_key.json")
+    keyFile, err := os.Open(u.HomeDir + "/.knox_server_config.json")
     defer keyFile.Close()
     if err != nil {
         errLogger.Fatal("Failed to read knox_server_key.json: ", err)
@@ -92,7 +92,7 @@ func main() {
 		errLogger.Fatal("Failed to make TLS key or cert: ", err)
 	}
 
-    d, err := sql.Open("postgres", "user=knox dbname=knox_storage sslmode=disable")
+    d, err := sql.Open("postgres", "user=knox dbname=athena sslmode=disable")
     if err != nil {
         errLogger.Fatal("db: ", err)
     }
