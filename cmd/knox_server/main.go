@@ -82,8 +82,8 @@ func main() {
         errLogger.Fatal("Could not decode knox_server_key.json: ", err)
     }
 	dbEncryptionKey := []byte(keyConfig.EncKey)
-    if len(keyConfig.EncKey) != 16 {
-        errLogger.Fatal("Incorect key size, must be 16 byte, now: ", len(keyConfig.EncKey))
+    if len(keyConfig.EncKey) != 32 {
+        errLogger.Fatal("Incorect key size, must be 32 byte, now: ", len(keyConfig.EncKey))
     }
 	cryptor := keydb.NewAESGCMCryptor(0, dbEncryptionKey)
 
