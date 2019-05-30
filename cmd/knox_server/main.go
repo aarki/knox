@@ -73,13 +73,13 @@ func main() {
     keyFile, err := os.Open(u.HomeDir + "/.knox_server_config.json")
     defer keyFile.Close()
     if err != nil {
-        errLogger.Fatal("Failed to read knox_server_key.json: ", err)
+        errLogger.Fatal("Failed to read knox_server_config.json: ", err)
     }
     keyConfig := KeyConfig{}
     decoder := json.NewDecoder(keyFile) 
     err = decoder.Decode(&keyConfig) 
     if err != io.EOF && err != nil {
-        errLogger.Fatal("Could not decode knox_server_key.json: ", err)
+        errLogger.Fatal("Could not decode knox_server_config.json: ", err)
     }
 	dbEncryptionKey := []byte(keyConfig.EncKey)
     if len(keyConfig.EncKey) != 32 {
