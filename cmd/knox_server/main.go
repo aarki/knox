@@ -71,9 +71,14 @@ func main() {
 	}
 
     keyFile, err := os.Open(u.HomeDir + "/.knox_server_config.json")
-    defer keyFile.Close()
     if err != nil {
-        errLogger.Fatal("Failed to read knox_server_config.json: ", err)
+        keyFile.Close()
+        cwd, _ := os.Getwd()
+        keyFile, err = os.Open(cwd + "/.knox_server_config.json")
+        defer keyFile.Close()
+        if (err != nil) {
+            errLogger.Fatal("Failed to read knox_server_config.json: ", err)
+        }
     }
     keyConfig := KeyConfig{}
     decoder := json.NewDecoder(keyFile) 
