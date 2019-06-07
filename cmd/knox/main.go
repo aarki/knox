@@ -100,19 +100,16 @@ func authHandler() string {
         // Version + Type + username + : + password
 		return "0k" + s
 	}
-    if s:= os.Getenv("KNOX_PROMPT_USER_AUTH"); s != "" && s != "0" {
-        // SSH authentication like above but prompts for user/pass
-        reader := bufio.NewReader(os.Stdin)
-        fmt.Print("Username: ")
-        username, _ := reader.ReadString('\n')
-        fmt.Print("Password: ")
-        bytes, _ := terminal.ReadPassword(int(syscall.Stdin))
-        password := string(bytes)
-        fmt.Print("\n")
-        return "0k" + strings.TrimSpace(username) + "@" + strings.TrimSpace(password)
-    }
-    return ""
-    // Diable other types of auth for now
+    // SSH authentication like above but prompts for user/pass
+    reader := bufio.NewReader(os.Stdin)
+    fmt.Print("Username: ")
+    username, _ := reader.ReadString('\n')
+    fmt.Print("Password: ")
+    bytes, _ := terminal.ReadPassword(int(syscall.Stdin))
+    password := string(bytes)
+    fmt.Print("\n")
+    return "0k" + strings.TrimSpace(username) + "@" + strings.TrimSpace(password)
+    // Disable other types of auth for now
 	//if s := os.Getenv("KNOX_USER_AUTH"); s != "" {
 	//	return "0u" + s
 	//}

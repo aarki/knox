@@ -289,7 +289,7 @@ func (c *HTTPClient) getHTTPData(method string, path string, body url.Values, da
 
 	auth := c.AuthHandler()
 	if auth == "" {
-		return fmt.Errorf("No authentication data given. Set KNOX_PROMPT_USER_AUTH=1 or KNOX_SSH_USER_AUTH=user@pass")
+		return fmt.Errorf("No authentication data given. Set KNOX_SSH_USER_AUTH=user@pass or enter through stdin")
 	}
 	// Get user from env variable and machine hostname from elsewhere.
 	r.Header.Set("Authorization", auth)
