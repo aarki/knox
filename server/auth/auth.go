@@ -237,10 +237,11 @@ func (p *SSHAuthorizationProvider) Authenticate(token string, r *http.Request) (
 		Auth: []ssh.AuthMethod{ ssh.Password(pass) },
 		HostKeyCallback: ssh.HostKeyCallback(func(hostname string, remote net.Addr, key ssh.PublicKey) error { return nil }),
 	}
-    _, err := ssh.Dial("tcp", "192.168.19.47:22", config) 
+    client, err := ssh.Dial("tcp", "192.168.19.47:22", config) 
     if err != nil {
         return nil, fmt.Errorf("auth: %v", err)
     }
+    client.Close()
     // Hard coding every authorized user as a member of security-team group
     // until we will implement user gorups
     groups := []string{"security-team"}
