@@ -127,6 +127,7 @@ func GetBackoffDuration(attempt int) time.Duration {
 // APIClient is an interface that talks to the knox server for key management.
 type APIClient interface {
 	GetKey(keyID string) (*Key, error)
+    GetAll() ([]Key, error)
 	CreateKey(keyID string, data []byte, acl ACL) (uint64, error)
 	GetKeys(keys map[string]string) ([]string, error)
 	DeleteKey(keyID string) error
@@ -196,6 +197,14 @@ func (c *HTTPClient) GetKey(keyID string) (*Key, error) {
 		return c.NetworkGetKey(keyID)
 	}
 	return key, err
+}
+
+// Gets all active keys which are Read accesible by user
+// Always work through network
+func (c *HTTPClient) GetAll() ([]Key, error) {
+	keys := []Key{}
+	err := c.getHTTPData("GET", "/v0/keyvalues/", nil, &keys)
+	return keys, err
 }
 
 // CreateKey creates a knox key with given keyID data and ACL.

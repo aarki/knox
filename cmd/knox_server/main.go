@@ -97,7 +97,7 @@ func main() {
 		errLogger.Fatal("Failed to make TLS key or cert: ", err)
 	}
 
-    d, err := sql.Open("postgres", "user=knox dbname=athena sslmode=disable")
+    d, err := sql.Open("postgres", "user=postgres dbname=athena sslmode=disable")
     if err != nil {
         errLogger.Fatal("db: ", err)
     }
