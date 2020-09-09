@@ -137,6 +137,34 @@ func (p *SpiffeProvider) Authenticate(token string, r *http.Request) (knox.Princ
 	return NewService(splits[0], splits[1]), nil
 }
 
+// SpiffeFallbackProvider is a SpiffeProvider that uses the same Type byte as the
+// MTLSAuthProvider. The use case for this is to allow a client that specifies
+// MTLSAuth to also transparently be given Spiffe based access as well. For
+// more predictable results, ensure that the MTLSAuthProvider is registered before
+// the SpiffeFallbackProvider so that MTLSAuthProvider is always used if it succeeds.
+// Note that this is only possible with the SpiffeProvider because there is no use
+// of the token from the AuthorizationHeader in this Provider.
+type SpiffeFallbackProvider struct {
+	SpiffeProvider
+}
+
+// NewSpiffeAuthFallbackProvider initializes a chain of trust with given CA certificates,
+// identical to the SpiffeProvider except the Type is defined as the MTLSAuthProvider
+// Type().
+func NewSpiffeAuthFallbackProvider(CAs *x509.CertPool) *SpiffeFallbackProvider {
+	return &SpiffeFallbackProvider{
+		SpiffeProvider: SpiffeProvider{
+			CAs:  CAs,
+			time: time.Now,
+		},
+	}
+}
+
+// Type is set to be identical to the Type of the MTLSAuthProvider
+func (s *SpiffeFallbackProvider) Type() byte {
+	return (&MTLSAuthProvider{}).Type()
+}
+
 // GitHubProvider implements user authentication through github.com
 type GitHubProvider struct {
 	client httpClient
@@ -226,7 +254,7 @@ func (p *SSHAuthorizationProvider ) Type() byte {
 	return 'k'
 }
 
-// Authenticate 
+// Authenticate
 func (p *SSHAuthorizationProvider) Authenticate(token string, r *http.Request) (knox.Principal, error) {
     // Delimiter for user/pass separation expected '@'
     s := strings.SplitN(token, "@", 2)
@@ -237,7 +265,7 @@ func (p *SSHAuthorizationProvider) Authenticate(token string, r *http.Request) (
 		Auth: []ssh.AuthMethod{ ssh.Password(pass) },
 		HostKeyCallback: ssh.HostKeyCallback(func(hostname string, remote net.Addr, key ssh.PublicKey) error { return nil }),
 	}
-    client, err := ssh.Dial("tcp", "192.168.19.47:22", config) 
+    client, err := ssh.Dial("tcp", "192.168.19.47:22", config)
     if err != nil {
         return nil, fmt.Errorf("auth: %v", err)
     }
@@ -249,14 +277,20 @@ func (p *SSHAuthorizationProvider) Authenticate(token string, r *http.Request) (
     return NewUser(user, groups), nil
 }
 
-// IsUser returns true if the principal is a user.
+// IsUser returns true if the principal, or first principal in the case of mux, is a user.
 func IsUser(p knox.Principal) bool {
+	if mux, ok := p.(knox.PrincipalMux); ok {
+		p = mux.Default()
+	}
 	_, ok := p.(user)
 	return ok
 }
 
-// IsService returns true if the principal is a service.
+// IsService returns true if the principal, or first principal in the case of mux, is a service.
 func IsService(p knox.Principal) bool {
+	if mux, ok := p.(knox.PrincipalMux); ok {
+		p = mux.Default()
+	}
 	_, ok := p.(service)
 	return ok
 }
@@ -367,6 +401,10 @@ func (s service) CanAccess(acl knox.ACL, t knox.AccessType) bool {
 		switch a.Type {
 		case knox.Service:
 			if a.ID == string(s.GetID()) && a.AccessType.CanAccess(t) {
+				return true
+			}
+		case knox.ServicePrefix:
+			if strings.HasPrefix(s.GetID(), a.ID) && a.AccessType.CanAccess(t) {
 				return true
 			}
 		}

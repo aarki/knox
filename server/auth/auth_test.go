@@ -95,6 +95,26 @@ func TestServiceCanAccess(t *testing.T) {
 	}
 }
 
+func TestPrincipalMuxUserOrService(t *testing.T) {
+	u := NewUser("test", []string{"returntrue"})
+	s := NewService("example.com", "serviceA")
+	userMux := knox.NewPrincipalMux(u, s)
+	serviceMux := knox.NewPrincipalMux(s, u)
+
+	if !IsUser(userMux) {
+		t.Error("IsUser failed to identify that mux is user first.")
+	}
+	if IsService(userMux) {
+		t.Error("IsService failed to identify that mux is user first, and thus not a service.")
+	}
+	if IsUser(serviceMux) {
+		t.Error("IsUser failed to identify that mux is service first, and thus not a user.")
+	}
+	if !IsService(serviceMux) {
+		t.Error("IsService failed to identify that mux is service first.")
+	}
+}
+
 const caCert = `-----BEGIN CERTIFICATE-----
 MIICOjCCAeCgAwIBAgIUIKkBZQbtx8rVaWIOhpabkqZSqecwCgYIKoZIzj0EAwIw
 aTELMAkGA1UEBhMCVVMxEzARBgNVBAgTCkNhbGlmb3JuaWExFjAUBgNVBAcTDVNh
@@ -297,9 +317,19 @@ TaI0ltMPlPDt4XSdWJawZ4euAGXJCyoxHFs8HQK8XwIgVokWyTcajFoP0/ZfzrM5
 SihfFJr39Ck4V5InJRHPPtY=`
 
 func TestSpiffeSuccess(t *testing.T) {
+	caPool := x509.NewCertPool()
+	caPool.AppendCertsFromPEM([]byte(spiffeCA))
+	a := SpiffeProvider{
+		CAs:  caPool,
+		time: func() time.Time { return time.Date(2018, time.March, 22, 11, 0, 0, 0, time.UTC) },
+	}
+	testSpiffeAuthFlow(t, "0sANYTHING", &a)
+}
+
+func testSpiffeAuthFlow(t *testing.T, authHeader string, provider Provider) {
 	expected := "spiffe://example.com/service"
 	req, err := http.NewRequest("GET", "http://localhost/", nil)
-	req.Header.Add("Authorization", "0sANYTHING")
+	req.Header.Add("Authorization", authHeader)
 	req.RemoteAddr = "0.0.0.0:23423"
 	certBytes := make([]byte, base64.StdEncoding.DecodedLen(len(spiffeCertB64)))
 	n, err := base64.StdEncoding.Decode(certBytes, []byte(spiffeCertB64))
@@ -311,13 +341,7 @@ func TestSpiffeSuccess(t *testing.T) {
 		PeerCertificates: []*x509.Certificate{c},
 	}
 
-	caPool := x509.NewCertPool()
-	caPool.AppendCertsFromPEM([]byte(spiffeCA))
-	a := SpiffeProvider{
-		CAs:  caPool,
-		time: func() time.Time { return time.Date(2018, time.March, 22, 11, 0, 0, 0, time.UTC) },
-	}
-	p, err := a.Authenticate("ANYTHING", req)
+	p, err := provider.Authenticate("ANYTHING", req)
 	if err != nil {
 		t.Fatal(err.Error())
 	}
@@ -327,4 +351,16 @@ func TestSpiffeSuccess(t *testing.T) {
 	if p.GetID() != expected {
 		t.Fatal("Service ID differs from expected result")
 	}
+}
+
+func TestSpiffeFallbackSuccess(t *testing.T) {
+	caPool := x509.NewCertPool()
+	caPool.AppendCertsFromPEM([]byte(spiffeCA))
+	a := SpiffeFallbackProvider{
+		SpiffeProvider: SpiffeProvider{
+			CAs:  caPool,
+			time: func() time.Time { return time.Date(2018, time.March, 22, 11, 0, 0, 0, time.UTC) },
+		},
+	}
+	testSpiffeAuthFlow(t, "0tANYTHING", &a)
 }

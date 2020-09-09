@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"reflect"
 	"sync/atomic"
 	"testing"
 )
@@ -11,12 +12,16 @@ import (
 func TestMockClient(t *testing.T) {
 	p := "primary"
 	a := []string{"active1", "active2"}
-	k := NewMock(p, a)
-	p1 := k.GetPrimary()
+	k0 := Key{
+		VersionList: []KeyVersion{
+			{Data: []byte(p), Status: Primary}, {Data: []byte(a[0]), Status: Active}, {Data: []byte(a[1]), Status: Active}}}
+
+	m := NewMock(p, a)
+	p1 := m.GetPrimary()
 	if p1 != p {
 		t.Fatalf("Expected %s : Got %s for primary key", p, p1)
 	}
-	r := k.GetActive()
+	r := m.GetActive()
 	if len(r) != len(a) {
 		t.Fatalf("For active keys: length %d should equal length %d", len(r), len(a))
 	}
@@ -25,6 +30,11 @@ func TestMockClient(t *testing.T) {
 			t.Fatalf("%s should equal %s", r[i], a[i])
 		}
 	}
+	k1 := m.GetKeyObject()
+	if !reflect.DeepEqual(k0, k1) {
+		t.Fatalf("Got %v, Want %v", k1, k0)
+	}
+
 }
 
 func buildGoodResponse(data interface{}) ([]byte, error) {
@@ -184,7 +194,7 @@ func TestCreateKey(t *testing.T) {
 	cli := MockClient(srv.Listener.Addr().String())
 
 	acl := ACL([]Access{
-		Access{
+		{
 			Type:       User,
 			AccessType: Read,
 			ID:         "test",
@@ -192,7 +202,7 @@ func TestCreateKey(t *testing.T) {
 	})
 
 	badACL := ACL([]Access{
-		Access{
+		{
 			Type:       233,
 			AccessType: 80927,
 			ID:         "test",
@@ -312,7 +322,7 @@ func TestPutAccess(t *testing.T) {
 			t.Fatalf("%s is not %s", r.URL.Path, "/v0/keys/testkey/access/")
 		}
 		r.ParseForm()
-		if r.PostForm["access"][0] == "" {
+		if r.PostForm["acl"][0] == "" {
 			t.Fatalf("%s is empty", r.PostForm["access"][0])
 		}
 	})
@@ -320,13 +330,13 @@ func TestPutAccess(t *testing.T) {
 
 	cli := MockClient(srv.Listener.Addr().String())
 
-	a := &Access{
+	a := Access{
 		Type:       User,
 		AccessType: Read,
 		ID:         "test",
 	}
 
-	badA := &Access{
+	badA := Access{
 		Type:       233,
 		AccessType: 80927,
 		ID:         "test",
@@ -386,5 +396,60 @@ func TestConcurrentDeletes(t *testing.T) {
 	// Verify that our atomic counter was incremented 4 times (2 attempts each)
 	if ops != 4 {
 		t.Fatalf("%d total client attempts is not 4", ops)
+	}
+}
+
+func TestGetKeyWithStatus(t *testing.T) {
+	expected := Key{
+		ID:          "testkey",
+		ACL:         ACL([]Access{}),
+		VersionList: KeyVersionList{},
+		VersionHash: "VersionHash",
+	}
+	resp, err := buildGoodResponse(expected)
+	if err != nil {
+		t.Fatalf("%s is not nil", err)
+	}
+	srv := buildServer(200, resp, func(r *http.Request) {
+		if r.Method != "GET" {
+			t.Fatalf("%s is not GET", r.Method)
+		}
+		if r.URL.Path != "/v0/keys/testkey/" {
+			t.Fatalf("%s is not %s", r.URL.Path, "/v0/keys/testkey/")
+		}
+
+		statusParams, ok := r.URL.Query()["status"]
+		if !ok {
+			t.Fatal("query param for status is missing")
+		}
+
+		var status VersionStatus
+		err := json.Unmarshal([]byte(statusParams[0]), &status)
+		if err != nil || status != Inactive {
+			t.Fatal("query param for status is incorrect:", err)
+		}
+	})
+	defer srv.Close()
+
+	cli := MockClient(srv.Listener.Addr().String())
+
+	k, err := cli.GetKeyWithStatus("testkey", Inactive)
+	if err != nil {
+		t.Fatalf("%s is not nil", err)
+	}
+	if k.ID != expected.ID {
+		t.Fatalf("%s does not equal %s", k.ID, expected.ID)
+	}
+	if len(k.ACL) != len(expected.ACL) {
+		t.Fatalf("%d does not equal %d", len(k.ACL), len(expected.ACL))
+	}
+	if len(k.VersionList) != len(expected.VersionList) {
+		t.Fatalf("%d does not equal %d", len(k.VersionList), len(expected.VersionList))
+	}
+	if k.VersionHash != expected.VersionHash {
+		t.Fatalf("%s does not equal %s", k.VersionHash, expected.VersionHash)
+	}
+	if k.Path != "" {
+		t.Fatalf("path '%v' is not empty", k.Path)
 	}
 }

@@ -45,7 +45,8 @@ func setPrincipal(r *http.Request, val knox.Principal) {
 	context.Set(r, principalContext, val)
 }
 
-func getParams(r *http.Request) map[string]string {
+// GetParams gets the parameters for the request through the parameters context.
+func GetParams(r *http.Request) map[string]string {
 	if rv := context.Get(r, paramsContext); rv != nil {
 		return rv.(map[string]string)
 	}
@@ -95,12 +96,17 @@ func Logger(logger *log.Logger) func(http.HandlerFunc) http.HandlerFunc {
 		return func(w http.ResponseWriter, r *http.Request) {
 			f(w, r)
 			p := GetPrincipal(r)
-			params := getParams(r)
+			params := GetParams(r)
 			apiError := GetAPIError(r)
+			agent := r.Header.Get("User-Agent")
+			if agent == "" {
+				agent = "unknown"
+			}
 			e := &reqLog{
 				Type:       "access",
 				StatusCode: 200,
 				Request:    buildRequest(r, p, params),
+				UserAgent:  agent,
 			}
 			if apiError != nil {
 				e.Code = apiError.Subcode
@@ -118,6 +124,7 @@ type reqLog struct {
 	StatusCode int     `json:"status_code"`
 	Request    request `json:"request"`
 	Msg        string  `json:"msg"`
+	UserAgent  string  `json:"userAgent"`
 }
 
 type request struct {
@@ -192,20 +199,27 @@ func buildRequest(req *http.Request, p knox.Principal, params map[string]string)
 func Authentication(providers []auth.Provider) func(http.HandlerFunc) http.HandlerFunc {
 	return func(f http.HandlerFunc) http.HandlerFunc {
 		return func(w http.ResponseWriter, r *http.Request) {
-			var principal knox.Principal
-			err := fmt.Errorf("No matching authentication providers found")
+			principals := []knox.Principal{}
+			errReturned := fmt.Errorf("No matching authentication providers found")
 
 			for _, p := range providers {
 				if token, match := providerMatch(p, r.Header.Get("Authorization")); match {
-					principal, err = p.Authenticate(token, r)
-					if err == nil {
-						setPrincipal(r, principal)
-						f(w, r)
-						return
+					principal, errAuthenticate := p.Authenticate(token, r)
+					if errAuthenticate != nil {
+						errReturned = errAuthenticate
+						continue
 					}
+					principals = append(principals, principal)
 				}
 			}
-			writeErr(errF(knox.UnauthenticatedCode, err.Error()))(w, r)
+			if len(principals) == 0 {
+				writeErr(errF(knox.UnauthenticatedCode, errReturned.Error()))(w, r)
+				return
+			}
+
+			setPrincipal(r, knox.NewPrincipalMux(principals...))
+			f(w, r)
+			return
 		}
 	}
 }

@@ -245,6 +245,8 @@ func TestUpdateAccess(t *testing.T) {
 	m, u, acl := GetMocks()
 	key1 := newKey("id1", acl, []byte("data"), u)
 	access := knox.Access{Type: knox.User, ID: "grootan", AccessType: knox.Read}
+	access2 := knox.Access{Type: knox.UserGroup, ID: "group", AccessType: knox.Write}
+	access3 := knox.Access{Type: knox.Machine, ID: "machine", AccessType: knox.Read}
 	err := m.UpdateAccess(key1.ID, access)
 	if err == nil {
 		t.Fatal("Should be an error")
@@ -259,19 +261,45 @@ func TestUpdateAccess(t *testing.T) {
 	if err != nil {
 		t.Fatalf("%s is not nil", err)
 	}
+	err = m.UpdateAccess(key1.ID, access2, access3)
+	if err != nil {
+		t.Fatalf("%s is not nil", err)
+	}
 
 	key, err := m.GetKey(key1.ID, knox.Active)
 	if err != nil {
 		t.Fatalf("%s is not nil", err)
 	}
+	if len(key.ACL) != 4 {
+		t.Fatalf("%d acl rules instead of expected 4", len(key.ACL))
+	}
 	for _, a := range key.ACL {
-		if a.ID == access.ID {
+		switch a.ID {
+		case access.ID:
 			if access.Type != a.Type {
 				t.Fatalf("%d does not equal %d", access.Type, a.Type)
 			}
 			if access.AccessType != a.AccessType {
 				t.Fatalf("%d does not equal %d", access.AccessType, a.AccessType)
 			}
+		case access2.ID:
+			if access2.Type != a.Type {
+				t.Fatalf("%d does not equal %d", access2.Type, a.Type)
+			}
+			if access2.AccessType != a.AccessType {
+				t.Fatalf("%d does not equal %d", access2.AccessType, a.AccessType)
+			}
+		case access3.ID:
+			if access3.Type != a.Type {
+				t.Fatalf("%d does not equal %d", access3.Type, a.Type)
+			}
+			if access3.AccessType != a.AccessType {
+				t.Fatalf("%d does not equal %d", access3.AccessType, a.AccessType)
+			}
+		case u.GetID():
+			continue
+		default:
+			t.Fatalf("unknown acl value for key %v", a)
 		}
 	}
 }
@@ -413,5 +441,61 @@ func TestAddUpdateVersion(t *testing.T) {
 	}
 	if kv1.CreationTime != kv.CreationTime {
 		t.Fatalf("%d does equal %d", kv1.CreationTime, kv.CreationTime)
+	}
+}
+
+func TestGetInactiveKeyVersions(t *testing.T) {
+	m, u, acl := GetMocks()
+
+	keyOrig := newKey("id1", acl, []byte("data"), u)
+	kv := newKeyVersion([]byte("data2"), knox.Active)
+
+	// Create key and add version so we have two versions
+	err := m.AddNewKey(&keyOrig)
+	if err != nil {
+		t.Fatalf("%s is not nil", err)
+	}
+
+	err = m.AddVersion(keyOrig.ID, &kv)
+	if err != nil {
+		t.Fatalf("%s is not nil", err)
+	}
+
+	// Get active versions and deactivate one of them
+	key, err := m.GetKey(keyOrig.ID, knox.Active)
+	if err != nil {
+		t.Fatalf("%s is not nil", err)
+	}
+
+	kvID0 := key.VersionList[0].ID
+	kvID1 := key.VersionList[1].ID
+
+	// Deactivate one of these versions
+	err = m.UpdateVersion(keyOrig.ID, kvID1, knox.Inactive)
+	if err != nil {
+		t.Fatalf("%s is not nil", err)
+	}
+
+	// Reading active key versions should now list only one version
+	key, err = m.GetKey(keyOrig.ID, knox.Active)
+	if err != nil {
+		t.Fatalf("%s is not nil", err)
+	}
+
+	if len(key.VersionList) != 1 {
+		t.Fatalf("Wanted one key version, got: %d", len(key.VersionList))
+	}
+	if key.VersionList[0].ID != kvID0 {
+		t.Fatalf("Inactive key id was listed as ctive")
+	}
+
+	// Reading active/inactive key versions should now list both
+	key, err = m.GetKey(keyOrig.ID, knox.Inactive)
+	if err != nil {
+		t.Fatalf("%s is not nil", err)
+	}
+
+	if len(key.VersionList) != 2 {
+		t.Fatalf("Wanted two key versions, got: %d", len(key.VersionList))
 	}
 }

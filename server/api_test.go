@@ -146,7 +146,7 @@ func checkinternalServerErrorResponse(t *testing.T, w *httptest.ResponseRecorder
 	if resp.Code != knox.InternalServerErrorCode {
 		t.Fatal("unexpected error code")
 	}
-	if resp.Message != HTTPErrMap[knox.InternalServerErrorCode].Message {
+	if resp.Message != "" {
 		t.Fatal("Wrong message")
 	}
 	if resp.Host == "" {
@@ -190,7 +190,7 @@ func TestNewKeyVersion(t *testing.T) {
 func TestNewKey(t *testing.T) {
 	id := "testkeyid"
 	uid := "testuser"
-	acl := knox.ACL([]knox.Access{knox.Access{ID: "testmachine", AccessType: knox.Admin, Type: knox.Machine}})
+	acl := knox.ACL([]knox.Access{{ID: "testmachine", AccessType: knox.Admin, Type: knox.Machine}})
 	data := []byte("testdata")
 	u := auth.NewUser(uid, []string{})
 	key := newKey(id, acl, data, u)

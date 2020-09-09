@@ -13,6 +13,7 @@ import (
 	"net/url"
 	"os"
 	"os/exec"
+	"sync"
 	"time"
 )
 
@@ -31,12 +32,16 @@ type Client interface {
 	// GetActive returns all of the active key versions for the knox key.
 	// This should be used for receiving relationships like verifying or decrypting.
 	GetActive() []string
+	// GetKeyObject returns the full key object, including versions, ACLs, and other attributes.
+	GetKeyObject() Key
 }
 
 type fileClient struct {
-	keyID   string
-	primary string
-	active  []string
+	sync.RWMutex
+	keyID     string
+	primary   string
+	active    []string
+	keyObject Key
 }
 
 // update reads the file from a specific location, decodes json, and updates the key in memory.
@@ -56,6 +61,9 @@ func (c *fileClient) update() error {
 }
 
 func (c *fileClient) setValues(key *Key) {
+	c.Lock()
+	defer c.Unlock()
+	c.keyObject = *key
 	c.primary = string(key.VersionList.GetPrimary().Data)
 	ks := key.VersionList.GetActive()
 	c.active = make([]string, len(ks))
@@ -65,11 +73,21 @@ func (c *fileClient) setValues(key *Key) {
 }
 
 func (c *fileClient) GetPrimary() string {
+	c.RLock()
+	defer c.RUnlock()
 	return c.primary
 }
 
 func (c *fileClient) GetActive() []string {
+	c.RLock()
+	defer c.RUnlock()
 	return c.active
+}
+
+func (c *fileClient) GetKeyObject() Key {
+	c.RLock()
+	defer c.RUnlock()
+	return c.keyObject
 }
 
 // NewFileClient creates a file watcher knox client for the keyID given (it refreshes every ten seconds).
@@ -97,9 +115,20 @@ func NewFileClient(keyID string) (Client, error) {
 	return c, nil
 }
 
+// NewMockKeyVersion creates a Knox KeyVersion to be used for testing
+func NewMockKeyVersion(keydata []byte, status VersionStatus) KeyVersion {
+	return KeyVersion{Data: keydata, Status: status}
+}
+
 // NewMock is a knox Client to be used for testing.
 func NewMock(primary string, active []string) Client {
-	return &fileClient{primary: primary, active: active}
+	var kvl []KeyVersion
+	kvl = append(kvl, NewMockKeyVersion([]byte(primary), Primary))
+	for _, data := range active {
+		kvl = append(kvl, NewMockKeyVersion([]byte(data), Active))
+	}
+
+	return &fileClient{primary: primary, active: active, keyObject: Key{VersionList: KeyVersionList(kvl)}}
 }
 
 // Register registers the given keyName with knox. If the operation fails, it returns an error.
@@ -132,11 +161,14 @@ type APIClient interface {
 	GetKeys(keys map[string]string) ([]string, error)
 	DeleteKey(keyID string) error
 	GetACL(keyID string) (*ACL, error)
-	PutAccess(keyID string, a *Access) error
+	PutAccess(keyID string, acl ...Access) error
 	AddVersion(keyID string, data []byte) (uint64, error)
 	UpdateVersion(keyID, versionID string, status VersionStatus) error
 	CacheGetKey(keyID string) (*Key, error)
 	NetworkGetKey(keyID string) (*Key, error)
+	GetKeyWithStatus(keyID string, status VersionStatus) (*Key, error)
+	CacheGetKeyWithStatus(keyID string, status VersionStatus) (*Key, error)
+	NetworkGetKeyWithStatus(keyID string, status VersionStatus) (*Key, error)
 }
 
 type HTTP interface {
@@ -153,15 +185,18 @@ type HTTPClient struct {
 	KeyFolder string
 	// Client is the http client for making network calls
 	Client HTTP
+	// Version is the current client version, useful for debugging and sent as a header
+	Version string
 }
 
 // NewClient creates a new client to connect to talk to Knox.
-func NewClient(host string, client HTTP, authHandler func() string, keyFolder string) APIClient {
+func NewClient(host string, client HTTP, authHandler func() string, keyFolder, version string) APIClient {
 	return &HTTPClient{
 		Host:        host,
 		Client:      client,
 		AuthHandler: authHandler,
 		KeyFolder:   keyFolder,
+		Version:     version,
 	}
 }
 
@@ -207,6 +242,52 @@ func (c *HTTPClient) GetAll() ([]Key, error) {
 	return keys, err
 }
 
+// CacheGetKeyWithStatus gets the key with status from file system cache.
+func (c *HTTPClient) CacheGetKeyWithStatus(keyID string, status VersionStatus) (*Key, error) {
+	if c.KeyFolder == "" {
+		return nil, fmt.Errorf("No folder set for cached key.")
+	}
+	st, err := status.MarshalJSON()
+	if err != nil {
+		return nil, err
+	}
+	path := c.KeyFolder + keyID + "?status=" + string(st)
+	b, err := ioutil.ReadFile(path)
+	if err != nil {
+		return nil, err
+	}
+	k := Key{Path: path}
+	err = json.Unmarshal(b, &k)
+	if err != nil {
+		return nil, err
+	}
+	return &k, nil
+}
+
+// GetKeyWithStatus gets a knox key by keyID and given version status (always calls network).
+func (c *HTTPClient) NetworkGetKeyWithStatus(keyID string, status VersionStatus) (*Key, error) {
+	// If clients need to know
+	d := url.Values{}
+	s, err := status.MarshalJSON()
+	if err != nil {
+		return nil, err
+	}
+	d.Set("status", string(s))
+
+	key := &Key{}
+	err = c.getHTTPData("GET", "/v0/keys/"+keyID+"/?status="+string(s), nil, key)
+	return key, err
+}
+
+// GetKeyWithStatus gets a knox key by keyID and status (leverages cache).
+func (c *HTTPClient) GetKeyWithStatus(keyID string, status VersionStatus) (*Key, error) {
+	key, err := c.CacheGetKeyWithStatus(keyID, status)
+	if err != nil {
+		return c.NetworkGetKeyWithStatus(keyID, status)
+	}
+	return key, err
+}
+
 // CreateKey creates a knox key with given keyID data and ACL.
 func (c *HTTPClient) CreateKey(keyID string, data []byte, acl ACL) (uint64, error) {
 	var i uint64
@@ -249,13 +330,13 @@ func (c *HTTPClient) GetACL(keyID string) (*ACL, error) {
 }
 
 // PutAccess will add an ACL rule to a specific key.
-func (c *HTTPClient) PutAccess(keyID string, a *Access) error {
+func (c *HTTPClient) PutAccess(keyID string, a ...Access) error {
 	d := url.Values{}
 	s, err := json.Marshal(a)
 	if err != nil {
 		return err
 	}
-	d.Set("access", string(s))
+	d.Set("acl", string(s))
 	err = c.getHTTPData("PUT", "/v0/keys/"+keyID+"/access/", d, nil)
 	return err
 }
@@ -302,6 +383,7 @@ func (c *HTTPClient) getHTTPData(method string, path string, body url.Values, da
 	}
 	// Get user from env variable and machine hostname from elsewhere.
 	r.Header.Set("Authorization", auth)
+	r.Header.Set("User-Agent", fmt.Sprintf("Knox_Client/%s", c.Version))
 
 	if body != nil {
 		r.Header.Set("Content-Type", "application/x-www-form-urlencoded")
@@ -347,5 +429,6 @@ func MockClient(host string) *HTTPClient {
 		},
 		KeyFolder: "",
 		Client:    &http.Client{Transport: &http.Transport{TLSClientConfig: &tls.Config{InsecureSkipVerify: true}}},
+		Version:   "mock",
 	}
 }
